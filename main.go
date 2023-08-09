@@ -166,11 +166,11 @@ func main() {
         chromedp.UserDataDir(dir),
     )
 
-    allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
-    defer cancel()
+    allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
+    defer cancelAlloc()
 
-    taskCtx, cancel := chromedp.NewContext(allocCtx, chromedp.WithLogf(log.Printf))
-    defer cancel()
+    taskCtx, cancelTask := chromedp.NewContext(allocCtx, chromedp.WithLogf(log.Printf))
+    defer cancelTask()
 
     eNid := ""
 
@@ -190,17 +190,17 @@ func main() {
         if len(sections) > 0 {
             for _, section := range sections {
                 if !contains(ids, section["id"]) { continue }
-                esNid := section["data-nid"] // "68020"
+                esNid := section["data-nid"]
                 chromedp.Run(taskCtx,
+                    chromedp.ActionFunc(playSound()),
                     chromedp.Navigate(fmt.Sprintf("https://soysocio.bocajuniors.com.ar/comprar_plano_asiento.php?eNid=%s&esNid=%s", eNid, esNid)),
                     chromedp.WaitVisible("table.secmap"),
-                    chromedp.Click("table.secmap td.d"),
+                    chromedp.Click("table.secmap td.d", chromedp.AtLeast(0)),
                     chromedp.WaitVisible("span#ubicacionLugar"),
-                    chromedp.Click("a#btnReservar"),
-                    chromedp.ActionFunc(playSound()),
+                    chromedp.Click("a#btnReservar", chromedp.AtLeast(0)),
                     chromedp.WaitVisible("svg#statio"),
                 )
-                break // TODO lo hace con el primero
+                break // TODO: lo hace solo con el primero
             }
         }
 
