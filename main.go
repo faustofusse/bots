@@ -8,55 +8,64 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/chromedp"
 	"github.com/faiface/beep"
 	"github.com/faiface/beep/mp3"
 	"github.com/faiface/beep/speaker"
 )
 
-var emptySections int
-
 var ids []string = []string{ "I", "J", "F", "G", "H", "K" }
+
+var eNid string
+var sections []*cdp.Node = []*cdp.Node{}
+var previousSections []*cdp.Node = []*cdp.Node{}
+var sameSections int = 1
 
 var soundFile *os.File
 var streamer beep.StreamSeekCloser
 var format beep.Format
 
-func initSound() {
+func initSound() func() {
     var err error
     soundFile, err = os.Open("./twitter.mp3")
     if err != nil { log.Fatal(err) }
     streamer, format, err = mp3.Decode(soundFile)
     if err != nil { log.Fatal(err) }
-    // defer streamer.Close()
-    speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
+    speaker.Init(format.SampleRate, format.SampleRate.N(time.Second / 10))
+    return func() { streamer.Close() }
 }
 
-func playSound() func(context.Context) error {
-    return func(ctx context.Context) error {
-        speaker.Play(streamer)
-        return nil
-    }
+func playSound(ctx context.Context) error {
+    speaker.Play(streamer)
+    return nil
 }
 
-func printSections(sections []map[string]string) {
-    if len(sections) > 0 {
-        fmt.Printf("\nsecciones: %v", sections)
-        emptySections = 0
-    } else if emptySections == 0 {
-        fmt.Printf("\nsecciones: %v x %v", sections, emptySections)
-        emptySections++
-    } else {
-        fmt.Printf("\rsecciones: %v x %v", sections, emptySections)
-        emptySections++
+func compareSectionArrays(a []*cdp.Node, b []*cdp.Node) bool {
+    if len(a) != len(b) { return false }
+    for i := range a { // TODO: ?? hacer mejor este for
+        if a[i].AttributeValue("id") != b[i].AttributeValue("id") {
+            return false
+        }
     }
+    return true
 }
 
-func logg(text string) func(context.Context) error {
-    return func(ctx context.Context) error {
-        fmt.Println("[LOG]", text)
-        return nil
+func printSections(ctx context.Context) error {
+    same := compareSectionArrays(previousSections, sections)
+    if !same {
+        sameSections = 1
+        fmt.Printf("\n")
     }
+    fmt.Printf("\rsecciones: [")
+    for i, node := range sections {
+        fmt.Printf("%v", node.AttributeValue("id"))
+        if i != len(sections) - 1 { fmt.Printf(", ") }
+    }
+    fmt.Printf("] x %v", sameSections)
+    if same { sameSections++ }
+    previousSections = sections
+    return nil
 }
 
 func contains(s []string, str string) bool {
@@ -85,12 +94,10 @@ func parseArgs() (username *string, password *string) {
     return username, password
 }
 
-func parseEnid(eNid *string) func(context.Context) error {
-    return func(ctx context.Context) error {
-        parts := strings.Split(*eNid, "=")
-        *eNid = parts[len(parts)-1]
-        return nil
-    }
+func parseEnid(ctx context.Context) error {
+    parts := strings.Split(eNid, "=")
+    eNid = parts[len(parts)-1]
+    return nil
 }
 
 func loginTasks(username *string, password *string) chromedp.Tasks {
@@ -105,12 +112,12 @@ func loginTasks(username *string, password *string) chromedp.Tasks {
     }
 }
 
-func gotoComprar(eNid *string) chromedp.Tasks {
+func gotoComprar() chromedp.Tasks {
     return chromedp.Tasks{
         chromedp.Navigate("https://soysocio.bocajuniors.com.ar/comprar.php"),
         chromedp.WaitVisible("div.contenidos div.columna3"),
-        chromedp.AttributeValue("div.contenidos div.columna3 a", "href", eNid, nil),
-        chromedp.ActionFunc(parseEnid(eNid)),
+        chromedp.AttributeValue("div.contenidos div.columna3 a", "href", &eNid, nil),
+        chromedp.ActionFunc(parseEnid),
         chromedp.Click("div.contenidos div.columna3 a"),
         chromedp.WaitVisible("a#btnPlatea"),
         chromedp.Click("a#btnPlatea"),
@@ -118,43 +125,53 @@ func gotoComprar(eNid *string) chromedp.Tasks {
     }
 }
 
-func checkSeats(eNid string, sections []map[string]string) func(context.Context) error {
-    return func (ctx context.Context) error {
-        for _, section := range sections {
-            if !contains(ids, section["id"]) { continue }
-            esNid := section["data-nid"] // "68020"
-            chromedp.Run(ctx,
-                chromedp.Navigate(fmt.Sprintf("https://soysocio.bocajuniors.com.ar/comprar_plano_asiento.php?eNid=%s&esNid=%s", eNid, esNid)),
-                chromedp.WaitVisible("table.secmap"),
-                chromedp.Click("table.secmap td.d"),
-                chromedp.WaitVisible("span#ubicacionLugar"),
-                chromedp.Click("a#btnReservar"),
-                chromedp.WaitVisible("svg#statio"),
-            )
-            break // TODO: lo hace con la primer seccion nomas
-        }
-        return nil
+func checkSeats(ctx context.Context) error {
+    var seats []*cdp.Node
+    var buttons []*cdp.Node
+    for _, section := range sections {
+        if !contains(ids, section.AttributeValue("id")) { continue }
+        esNid := section.AttributeValue("data-nid")
+        fmt.Printf("\nChecking section %v\n", section.AttributeValue("id"))
+        chromedp.Run(ctx,
+            chromedp.Navigate(fmt.Sprintf("https://soysocio.bocajuniors.com.ar/comprar_plano_asiento.php?eNid=%s&esNid=%s", eNid, esNid)),
+            chromedp.WaitVisible("table.secmap"),
+            chromedp.Nodes("table.secmap td.d", &seats, chromedp.AtLeast(0)),
+        )
+        fmt.Printf("\nChecking seats length\n")
+        if len(seats) == 0 { chromedp.NavigateBack().Do(ctx); continue }
+        chromedp.Run(ctx,
+            chromedp.Click("table.secmap td.d"),
+            chromedp.WaitVisible("span#ubicacionLugar"),
+            chromedp.Nodes("a#btnReservar", &buttons, chromedp.AtLeast(0)),
+        )
+        fmt.Printf("\nChecking reserve button\n")
+        if len(buttons) == 0 || buttons[0].AttributeValue("style") == "display: none;" { chromedp.NavigateBack().Do(ctx); continue }
+        chromedp.Run(ctx,
+            chromedp.ActionFunc(playSound),
+            chromedp.Click("a#btnReservar"),
+            chromedp.WaitVisible("svg#statio"),
+        )
+        break // TODO: lo hace con la primer seccion nomas
     }
+    return nil
 }
 
-// func checkSections(eNid string) chromedp.Tasks {
-//     sections := []map[string]string{}
-//     return chromedp.Tasks{
-//         chromedp.WaitVisible("svg#statio"),
-//         chromedp.Sleep(200 * time.Millisecond),
-//         chromedp.Reload(),
-//         chromedp.WaitVisible("svg#statio"),
-//         chromedp.AttributesAll("div#divMap switch g.enabled", &sections, chromedp.AtLeast(0)),
-//         chromedp.ActionFunc(logg(fmt.Sprintf("secciones: %v", sections))),
-//         chromedp.ActionFunc(checkSeats(eNid, sections)), chromedp.ActionFunc(func(ctx context.Context) error { return chromedp.Run(ctx, checkSections(eNid)) }),
-//     }
-// }
+func checkSections() chromedp.Tasks {
+    return chromedp.Tasks{
+        chromedp.Reload(),
+        chromedp.WaitVisible("svg#statio"),
+        chromedp.Nodes("svg#statio g.enabled", &sections, chromedp.AtLeast(0)),
+        chromedp.ActionFunc(printSections),
+        chromedp.ActionFunc(checkSeats),
+        chromedp.ActionFunc(func(ctx context.Context) error { return chromedp.Run(ctx, checkSections()) }),
+    }
+}
 
 func main() {
     username, password := parseArgs()
 
-    initSound()
-    defer streamer.Close()
+    cancel := initSound()
+    defer cancel()
 
     dir, err := os.MkdirTemp("", "chromedp-example")
     if err != nil { log.Fatal(err) }
@@ -166,46 +183,13 @@ func main() {
         chromedp.UserDataDir(dir),
     )
 
-    allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
-    defer cancelAlloc()
+    allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
+    defer cancel() // TODO: se puede sobreescribir cancel????
 
-    taskCtx, cancelTask := chromedp.NewContext(allocCtx, chromedp.WithLogf(log.Printf))
-    defer cancelTask()
+    taskCtx, cancel := chromedp.NewContext(allocCtx, chromedp.WithLogf(log.Printf))
+    defer cancel()
 
-    eNid := ""
+    err = chromedp.Run(taskCtx, loginTasks(username, password), gotoComprar(), checkSections())
 
-    // if err = chromedp.Run(taskCtx, loginTasks(username, password), gotoComprar(&eNid), checkSections(eNid)); err != nil { log.Fatal(err) }
-
-    if err = chromedp.Run(taskCtx, loginTasks(username, password), gotoComprar(&eNid)); err != nil { log.Fatal(err) }
-
-    sections := []map[string]string{}
-    for {
-        chromedp.Run(taskCtx,
-            chromedp.WaitVisible("svg#statio"),
-            chromedp.AttributesAll("div#divMap switch g.enabled", &sections, chromedp.AtLeast(0)),
-        )
-
-        printSections(sections)
-
-        if len(sections) > 0 {
-            for _, section := range sections {
-                if !contains(ids, section["id"]) { continue }
-                esNid := section["data-nid"]
-                chromedp.Run(taskCtx,
-                    chromedp.ActionFunc(playSound()),
-                    chromedp.Navigate(fmt.Sprintf("https://soysocio.bocajuniors.com.ar/comprar_plano_asiento.php?eNid=%s&esNid=%s", eNid, esNid)),
-                    chromedp.WaitVisible("table.secmap"),
-                    chromedp.Click("table.secmap td.d", chromedp.AtLeast(0)),
-                    chromedp.WaitVisible("span#ubicacionLugar"),
-                    chromedp.Click("a#btnReservar", chromedp.AtLeast(0)),
-                    chromedp.WaitVisible("svg#statio"),
-                )
-                break // TODO: lo hace solo con el primero
-            }
-        }
-
-        sections = []map[string]string{}
-        time.Sleep(200 * time.Millisecond)
-        chromedp.Reload().Do(taskCtx)
-    }
+    if err != nil { log.Fatal(err) }
 }
