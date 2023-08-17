@@ -21,6 +21,7 @@ var eNid string
 var sections []*cdp.Node = []*cdp.Node{}
 var previousSections []*cdp.Node = []*cdp.Node{}
 var sameSections int = 1
+var printed bool = false
 
 var soundFile *os.File
 var streamer beep.StreamSeekCloser
@@ -53,7 +54,9 @@ func compareSectionArrays(a []*cdp.Node, b []*cdp.Node) bool {
 
 func printSections(ctx context.Context) error {
     same := compareSectionArrays(previousSections, sections)
-    if !same {
+    if !printed {
+        printed = true
+    } else if !same {
         sameSections = 1
         fmt.Printf("\n")
     }
@@ -131,27 +134,24 @@ func checkSeats(ctx context.Context) error {
     for _, section := range sections {
         if !contains(ids, section.AttributeValue("id")) { continue }
         esNid := section.AttributeValue("data-nid")
-        fmt.Printf("\nChecking section %v\n", section.AttributeValue("id"))
         chromedp.Run(ctx,
             chromedp.Navigate(fmt.Sprintf("https://soysocio.bocajuniors.com.ar/comprar_plano_asiento.php?eNid=%s&esNid=%s", eNid, esNid)),
             chromedp.WaitVisible("table.secmap"),
             chromedp.Nodes("table.secmap td.d", &seats, chromedp.AtLeast(0)),
         )
-        fmt.Printf("\nChecking seats length\n")
         if len(seats) == 0 { chromedp.NavigateBack().Do(ctx); continue }
         chromedp.Run(ctx,
             chromedp.Click("table.secmap td.d"),
             chromedp.WaitVisible("span#ubicacionLugar"),
             chromedp.Nodes("a#btnReservar", &buttons, chromedp.AtLeast(0)),
         )
-        fmt.Printf("\nChecking reserve button\n")
         if len(buttons) == 0 || buttons[0].AttributeValue("style") == "display: none;" { chromedp.NavigateBack().Do(ctx); continue }
         chromedp.Run(ctx,
             chromedp.ActionFunc(playSound),
-            chromedp.Click("a#btnReservar"),
+            chromedp.EvaluateAsDevTools("$('a#btnReservar').click()", nil),
             chromedp.WaitVisible("svg#statio"),
         )
-        break // TODO: lo hace con la primer seccion nomas
+        break
     }
     return nil
 }
@@ -189,7 +189,11 @@ func main() {
     taskCtx, cancel := chromedp.NewContext(allocCtx, chromedp.WithLogf(log.Printf))
     defer cancel()
 
-    err = chromedp.Run(taskCtx, loginTasks(username, password), gotoComprar(), checkSections())
-
+    err = chromedp.Run(taskCtx, loginTasks(username, password))
     if err != nil { log.Fatal(err) }
+
+    for {
+        err = chromedp.Run(taskCtx, gotoComprar(), checkSections())
+        fmt.Printf("\nerror: %v", err.Error())
+    }
 }
