@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
 	"time"
+	_ "embed"
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/chromedp"
@@ -23,15 +26,15 @@ var previousSections []*cdp.Node = []*cdp.Node{}
 var sameSections int = 1
 var printed bool = false
 
-var soundFile *os.File
+//go:embed twitter.mp3
+var audioBytes []byte
 var streamer beep.StreamSeekCloser
 var format beep.Format
 
 func initSound() func() {
     var err error
-    soundFile, err = os.Open("./twitter.mp3")
-    if err != nil { log.Fatal(err) }
-    streamer, format, err = mp3.Decode(soundFile)
+    reader := io.NopCloser(bytes.NewReader(audioBytes))
+    streamer, format, err = mp3.Decode(reader)
     if err != nil { log.Fatal(err) }
     speaker.Init(format.SampleRate, format.SampleRate.N(time.Second / 10))
     return func() { streamer.Close() }
