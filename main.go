@@ -33,25 +33,26 @@ var sameSections int = 1
 var printed bool = false
 
 //go:embed twitter.mp3
-var shortAudioBytes []byte
+var twitter []byte
 //go:embed visa.mp3
-var longAudioBytes []byte
-var streamer beep.StreamSeekCloser
-var format beep.Format
+var visa []byte
+var buffer *beep.Buffer
 
-func initSound(audio string) func() {
+func initSound(audio string) {
     var err error
-    audioBytes := shortAudioBytes
-    if audio == "long" { audioBytes = longAudioBytes }
+    audioBytes := twitter
+    if audio == "visa" { audioBytes = visa }
     reader := io.NopCloser(bytes.NewReader(audioBytes))
-    streamer, format, err = mp3.Decode(reader)
+    streamer, format, err := mp3.Decode(reader)
     if err != nil { log.Fatal(err) }
+    buffer = beep.NewBuffer(format)
+    buffer.Append(streamer)
+    streamer.Close()
     speaker.Init(format.SampleRate, format.SampleRate.N(time.Second / 10))
-    return func() { streamer.Close() }
 }
 
 func playSound(ctx context.Context) error {
-    speaker.Play(streamer)
+    speaker.Play(buffer.Streamer(0, buffer.Len()))
     return nil
 }
 
@@ -156,6 +157,17 @@ func gotoComprar() chromedp.Tasks {
     }
 }
 
+func checkSections() chromedp.Tasks {
+    return chromedp.Tasks{
+        chromedp.Reload(),
+        chromedp.WaitVisible("svg#statio"),
+        chromedp.Nodes("svg#statio g.enabled", &sections, chromedp.AtLeast(0)),
+        chromedp.ActionFunc(printSections),
+        chromedp.ActionFunc(checkSeats),
+        chromedp.ActionFunc(func(ctx context.Context) error { return chromedp.Run(ctx, checkSections()) }),
+    }
+}
+
 func checkSeats(ctx context.Context) error {
     var seats, buttons []*cdp.Node
     for _, section := range sections {
@@ -183,24 +195,12 @@ func checkSeats(ctx context.Context) error {
     return nil
 }
 
-func checkSections() chromedp.Tasks {
-    return chromedp.Tasks{
-        chromedp.Reload(),
-        chromedp.WaitVisible("svg#statio"),
-        chromedp.Nodes("svg#statio g.enabled", &sections, chromedp.AtLeast(0)),
-        chromedp.ActionFunc(printSections),
-        chromedp.ActionFunc(checkSeats),
-        chromedp.ActionFunc(func(ctx context.Context) error { return chromedp.Run(ctx, checkSections()) }),
-    }
-}
-
 func main() {
     username, password, selected, audio := parseArgs()
 
     ids = parseSections(*selected)
 
-    cancel := initSound(*audio)
-    defer cancel()
+    initSound(*audio)
 
     opts := append(
         chromedp.DefaultExecAllocatorOptions[:],
@@ -217,8 +217,5 @@ func main() {
     err := chromedp.Run(taskCtx, loginTasks(username, password))
     if err != nil { log.Fatal(err) }
 
-    for {
-        err = chromedp.Run(taskCtx, gotoComprar(), checkSections())
-        // fmt.Printf("\nerror: %v", err.Error())
-    }
+    for { err = chromedp.Run(taskCtx, gotoComprar(), checkSections()) }
 }
