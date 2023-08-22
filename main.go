@@ -33,12 +33,16 @@ var sameSections int = 1
 var printed bool = false
 
 //go:embed twitter.mp3
-var audioBytes []byte
+var shortAudioBytes []byte
+//go:embed visa.mp3
+var longAudioBytes []byte
 var streamer beep.StreamSeekCloser
 var format beep.Format
 
-func initSound() func() {
+func initSound(audio string) func() {
     var err error
+    audioBytes := shortAudioBytes
+    if audio == "long" { audioBytes = longAudioBytes }
     reader := io.NopCloser(bytes.NewReader(audioBytes))
     streamer, format, err = mp3.Decode(reader)
     if err != nil { log.Fatal(err) }
@@ -108,14 +112,17 @@ func parseSections(selected string) (result []string) {
     return result
 }
 
-func parseArgs() (username *string, password *string, selected *string) {
+func parseArgs() (username *string, password *string, selected *string, audio *string) {
     if username = getArg("-u"); username == nil { username = getArg("--username") }
     if username == nil { log.Fatal("Username missing") }
     if password = getArg("-p"); password == nil { password = getArg("--password") }
     if password == nil { log.Fatal("Password missing") }
     if selected = getArg("-s"); selected == nil { selected = getArg("--sections") }
     if selected == nil { log.Fatal("Selected sections missing") }
-    return username, password, selected
+    if audio = getArg("-a"); audio == nil { audio = getArg("--audio") }
+    if audio == nil { audio = new(string) }
+    if *audio != "long" { *audio = "short" }
+    return username, password, selected, audio
 }
 
 func parseEnid(ctx context.Context) error {
@@ -188,11 +195,11 @@ func checkSections() chromedp.Tasks {
 }
 
 func main() {
-    username, password, selected := parseArgs()
+    username, password, selected, audio := parseArgs()
 
     ids = parseSections(*selected)
 
-    cancel := initSound()
+    cancel := initSound(*audio)
     defer cancel()
 
     opts := append(
