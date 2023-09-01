@@ -122,7 +122,7 @@ func parseArgs() (username *string, password *string, selected *string, audio *s
     if selected == nil { log.Fatal("Selected sections missing") }
     if audio = getArg("-a"); audio == nil { audio = getArg("--audio") }
     if audio == nil { audio = new(string) }
-    if *audio != "long" { *audio = "short" }
+    if *audio != "visa" { *audio = "twitter" }
     return username, password, selected, audio
 }
 
@@ -201,6 +201,8 @@ func main() {
     ids = parseSections(*selected)
 
     initSound(*audio)
+
+    return
 
     opts := append(
         chromedp.DefaultExecAllocatorOptions[:],
