@@ -188,6 +188,7 @@ func checkSeats(ctx context.Context) error {
         chromedp.Run(ctx,
             chromedp.ActionFunc(playSound),
             chromedp.EvaluateAsDevTools("$('a#btnReservar').click()", nil),
+            // chromedp.WaitVisible("div.isa_info", chromedp.WaitFunc),
             chromedp.WaitVisible("svg#statio"),
         )
         break
@@ -201,8 +202,6 @@ func main() {
     ids = parseSections(*selected)
 
     initSound(*audio)
-
-    return
 
     opts := append(
         chromedp.DefaultExecAllocatorOptions[:],
