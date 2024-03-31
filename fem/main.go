@@ -93,7 +93,7 @@ func execute(cmd *exec.Cmd, title string) {
         m := scanner.Text()
         if strings.ContainsRune(m, '%') {
             percentage := strings.Split(m, "%")[0]
-            fmt.Printf("\033[1ADownloading lesson: %v - %v%% \n", title, percentage)
+            fmt.Printf("\033[1Adownloading lesson: %v - %v%% \n", title, percentage)
         }
     }
     cmd.Wait()
@@ -116,7 +116,7 @@ func download(lesson map[string]any) {
     cookies, err := request("GET", url, nil, &response)
     if err != nil { log.Fatal(err.Error()) }
     hls := response["url"].(string)
-    filename := lesson["slug"].(string) + ".mp4"
+    filename := fmt.Sprintf("%02d-%s.mp4", int(lesson["index"].(float64)), lesson["slug"].(string))
     args := []string{}
     args = append(args, "-m", "ffpb")
     headers := ""
@@ -132,7 +132,10 @@ func download(lesson map[string]any) {
     args = append(args, "-user_agent", "'" + userAgent + "'")
     args = append(args, "-f", "hls")
     args = append(args, "-i", hls)
-    args = append(args, "-c", "copy", "-bsf:a", "aac_adtstoasc")
+    args = append(args, "-c", "copy")
+    args = append(args, "-bsf:a", "aac_adtstoasc")
+    args = append(args, "-metadata", "title='" + lesson["title"].(string) + "'")
+    args = append(args, "-metadata", "description='" + lesson["description"].(string) + "'")
     args = append(args, filename)
     cmd := exec.Command("python3", args...)
     execute(cmd, lesson["title"].(string))
